@@ -1,0 +1,10 @@
+# macOS
+.DS_Store
+
+# Локальная версия PAC с приватными доменами (шаблон лежит рядом — *.example)
+ru-whitelist.pac
+
+# Старые снимки CIDR с датой в имени — игнорируем (legacy формат, ручные).
+# Стабильный merged-ru-cidrs.txt (без даты) — TRACKED, в него ежедневно
+# пишет VDS/deploy/scripts/mac/ls-rules-sync.sh, по нему генерится .lsrules.
+merged-ru-cidrs-*.txt
