@@ -59,7 +59,7 @@ OUTPUT_NORU="$OUT_DIR/no-ru.lsrules"
 echo "Генерирую .lsrules файлы..."
 
 python3 - "$CIDRS_FILE" "$OUTPUT_RU" "$OUTPUT_NORU" << 'PYEOF'
-import sys, json
+import sys, json, os, glob, subprocess
 
 cidrs_file = sys.argv[1]
 output_ru = sys.argv[2]
@@ -153,9 +153,65 @@ noru_apps = [
     ("/Applications/Charles.app/Contents/MacOS/Charles", "Charles")
 ]
 
+# Chrome весь сетевой I/O делает в отдельном процессе «Google Chrome Helper»
+# (--type=utility --utility-sub-type=network.mojom.NetworkService, Code ID
+# com.google.Chrome.helper). Для Little Snitch это ДРУГОЙ процесс — правила на
+# главный бинарь его не ловят вообще, ни deny, ни allow. Проверено 2026-08-08:
+# при снятии allow-правила хелпера LS выдал алерт на обычный не-РФ адрес, хотя
+# у главного бинаря в этой же группе есть allow «всё остальное». Пока хелпер не
+# был в группе, Chrome ходил на РФ мимо deny (симптом: яндекс открывался).
+# То же самое, что и с Charles ниже: соединение открывает не тот процесс, на
+# который повешено правило.
+#
+# Путь хелпера содержит номер версии Chrome и меняется при каждом обновлении,
+# поэтому по пути его матчить нельзя — правило молча перестанет срабатывать.
+# Вместо пути используем Code ID: формат .lsrules принимает в ключе `process`
+# значение вида `identifier.DEV_TEAM_ID/IDENTIFIER` вместо абсолютного пути
+# (https://help.obdev.at/littlesnitch6/adv-lsrules-file-format). Такое правило
+# привязано к подписи, а не к расположению файла, и переживает обновления
+# Chrome. Значение читаем из самой подписи — чтобы смена Team ID у Google не
+# превратила правило в тихо-неработающее.
+CHROME_HELPER_CODE_ID_FALLBACK = "EQHXZ8M8AV/com.google.Chrome.helper"
+
+def chrome_helper_code_id():
+    base = ("/Applications/Google Chrome.app/Contents/Frameworks/"
+            "Google Chrome Framework.framework/Versions")
+    for version_dir in sorted(glob.glob(os.path.join(base, "*")), reverse=True):
+        app = os.path.join(version_dir, "Helpers/Google Chrome Helper.app")
+        if os.path.islink(version_dir) or not os.path.isdir(app):
+            continue
+        try:
+            out = subprocess.run(["codesign", "-dv", "--verbose=2", app],
+                                 capture_output=True, text=True, timeout=30).stderr
+        except Exception as e:
+            print(f"  ВНИМАНИЕ: codesign не отработал ({e}) — беру Code ID из константы.",
+                  file=sys.stderr)
+            break
+        ident = team = None
+        for line in out.splitlines():
+            if line.startswith("Identifier="):
+                ident = line.split("=", 1)[1].strip()
+            elif line.startswith("TeamIdentifier="):
+                team = line.split("=", 1)[1].strip()
+        if ident and team and team != "not set":
+            return f"{team}/{ident}", "подпись"
+        print(f"  ВНИМАНИЕ: подпись {app} прочитана, но Code ID не извлёкся "
+              f"(Identifier={ident}, TeamIdentifier={team}) — беру константу.",
+              file=sys.stderr)
+        break
+    return CHROME_HELPER_CODE_ID_FALLBACK, "константа"
+
+helper_code_id, code_id_source = chrome_helper_code_id()
+print(f"  + Chrome Helper по Code ID: {helper_code_id} ({code_id_source})")
+if code_id_source == "подпись" and helper_code_id != CHROME_HELPER_CODE_ID_FALLBACK:
+    print(f"  ВНИМАНИЕ: Code ID хелпера разошёлся с константой в скрипте "
+          f"({CHROME_HELPER_CODE_ID_FALLBACK}) — обнови CHROME_HELPER_CODE_ID_FALLBACK.",
+          file=sys.stderr)
+noru_apps.append((f"identifier.{helper_code_id}", "Chrome Helper"))
+
 noru_rules = {
     "name": "No-RU: Safari + Chrome + Charles",
-    "description": "Safari, Chrome и Charles (прокси): заблокировать российские IP, всё остальное — разрешить. Приложения ПОЛНОСТЬЮ определены этой группой (deny РФ + allow остального), поэтому отдельное ручное allow-правило в Little Snitch заводить НЕ нужно. Charles включён, т.к. при проксировании именно его процесс открывает соединение к сайту — иначе РФ-коннекты утекают мимо deny на браузер.",
+    "description": "Safari, Chrome (включая Google Chrome Helper) и Charles (прокси): заблокировать российские IP, всё остальное — разрешить. Приложения ПОЛНОСТЬЮ определены этой группой (deny РФ + allow остального), поэтому отдельное ручное allow-правило в Little Snitch заводить НЕ нужно — наоборот, ручное 'allow any outgoing connection' на Google Chrome Helper обязательно удалить, оно пробивает дыру мимо deny. Chrome Helper включён, т.к. весь сетевой I/O Chrome идёт из него, а не из главного бинаря; Charles — т.к. при проксировании соединение к сайту открывает его процесс. В обоих случаях deny на бинарь браузера не срабатывает.",
     "rules": []
 }
 
