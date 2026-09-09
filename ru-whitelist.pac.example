@@ -1,0 +1,75 @@
+function FindProxyForURL(url, host) {
+    host = host.toLowerCase();
+
+    // --- Локальные адреса: всегда DIRECT ---
+    if (host === "localhost" ||
+        host === "127.0.0.1" ||
+        isPlainHostName(host) ||
+        isInNet(host, "127.0.0.0", "255.0.0.0") ||
+        isInNet(host, "10.0.0.0", "255.0.0.0") ||
+        isInNet(host, "172.16.0.0", "255.240.0.0") ||
+        isInNet(host, "192.168.0.0", "255.255.0.0")) {
+        return "DIRECT";
+    }
+
+    // --- Прямой IP в URL (не домен) → блокировать ---
+    // Если кто-то обращается по IP напрямую (http://1.2.3.4/),
+    // мы не можем определить страну — блокируем.
+    // Локальные диапазоны уже пропущены выше.
+    var ipPattern = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/;
+    if (ipPattern.test(host)) {
+        return "PROXY 127.0.0.1:1";
+    }
+
+    // --- Российские TLD ---
+    if (dnsDomainIs(host, ".ru") ||
+        dnsDomainIs(host, ".su") ||
+        dnsDomainIs(host, ".рф")         || dnsDomainIs(host, ".xn--p1ai") ||
+        dnsDomainIs(host, ".москва")     || dnsDomainIs(host, ".xn--80adxhks") ||
+        dnsDomainIs(host, ".moscow") ||
+        dnsDomainIs(host, ".рус")        || dnsDomainIs(host, ".xn--p1acf") ||
+        dnsDomainIs(host, ".дети")       || dnsDomainIs(host, ".xn--d1acj3b") ||
+        dnsDomainIs(host, ".tatar")) {
+        return "DIRECT";
+    }
+
+    // --- Российские сервисы на нероссийских TLD ---
+    // Добавляйте только домены, которыми реально пользуетесь.
+    var ruDomains = [
+        // Firefox — обновления и расширения
+        "mozilla.org",
+        "mozilla.net",
+        "mozilla.com",
+
+        // uBlock Origin — загрузка/обновление списков фильтров
+        "raw.githubusercontent.com",
+        "ublockorigin.pages.dev",
+        "ublockorigin.github.io",
+        "filters.adtidy.org",
+        "easylist.to",
+        "easylist-downloads.adblockplus.org",
+        "pgl.yoyo.org",
+        "malware-filter.gitlab.io",
+        "secure.fanboy.co.nz",
+
+        // RU-сервисы на .com и пр.
+        "vk.me",
+        "vk.com",
+        "timeweb.cloud",
+
+        // ==== Ваши собственные домены ====
+        // Добавьте сюда свои RU-домены на нероссийских TLD.
+        // Скопируйте этот файл в ru-whitelist.pac и редактируйте уже копию
+        // (ru-whitelist.pac в .gitignore, приватное не утечёт).
+        // "example.com",
+    ];
+
+    for (var i = 0; i < ruDomains.length; i++) {
+        if (dnsDomainIs(host, ruDomains[i]) || host === ruDomains[i]) {
+            return "DIRECT";
+        }
+    }
+
+    // --- Всё остальное → заблокировать ---
+    return "PROXY 127.0.0.1:1";
+}
